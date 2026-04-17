@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import json
 
+from gh_analyzer.security_scanner import scan_path
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -27,8 +29,9 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.command == "scan":
-        print(f"'scan' command recognized for repo: {args.repo}")
-        return 0
+        findings = scan_path(args.path)
+        print(json.dumps(findings, indent=2))
+        return 1 if findings else 0
 
     if args.command == "metrics":
         print(f"'metrics' command recognized for repo: {args.repo}")
