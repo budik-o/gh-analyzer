@@ -6,7 +6,7 @@ import os
 import re
 from pathlib import Path
 
-IGNORE_DIRS = {".git", "__pycache__", "venv", "node_modules"}
+IGNORE_DIRS = {".git", "__pycache__", ".venv", "node_modules"}
 RULES = ("password", "api_key", "token", "secret")
 
 
@@ -50,7 +50,14 @@ def scan_file(file_path: Path, patterns: dict[str, re.Pattern[str]]) -> list[dic
 
 def scan_path(path: str) -> list[dict[str, object]]:
     root_path = Path(path)
+    if not root_path.exists():
+        raise ValueError(f"Path does not exist: {path}")
+
     patterns = build_patterns()
+
+    if root_path.is_file():
+        return scan_file(root_path, patterns)
+
     findings: list[dict[str, object]] = []
     for file_path in iter_files(root_path):
         findings.extend(scan_file(file_path, patterns))

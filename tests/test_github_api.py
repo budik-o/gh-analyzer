@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
+from requests import RequestException
 
 from gh_analyzer.github_api import GitHubApiError, fetch_pull_requests
 
@@ -140,3 +141,26 @@ def test_api_error_raises(mock_get: MagicMock) -> None:
 
     assert "404" in str(excinfo.value)
     mock_get.assert_called_once()
+
+
+@patch("gh_analyzer.github_api.requests.get")
+def test_request_exception_wrapped(mock_get: MagicMock) -> None:
+    """Transport-level request failures are wrapped in GitHubApiError."""
+    mock_get.side_effect = RequestException("timeout")
+
+    with pytest.raises(GitHubApiError) as excinfo:
+        fetch_pull_requests("owner/repo")
+
+    assert "Request failed" in str(excinfo.value)
+
+
+@patch("gh_analyzer.github_api.requests.get")
+def test_unexpected_response_shape_raises(mock_get: MagicMock) -> None:
+    """Non-list API payloads raise GitHubApiError with clear shape message."""
+    mock_get.return_value = _http_response(json_data=None)
+    mock_get.return_value.json.return_value = {"message": "oops"}
+
+    with pytest.raises(GitHubApiError) as excinfo:
+        fetch_pull_requests("owner/repo")
+
+    assert "Unexpected response shape" in str(excinfo.value)

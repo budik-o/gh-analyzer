@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from gh_analyzer.security_scanner import scan_path
 
 
@@ -66,3 +68,25 @@ def test_multiple_findings_on_separate_lines(tmp_path: Path) -> None:
     assert findings[0]["line_number"] == 1
     assert findings[1]["rule"] == "token"
     assert findings[1]["line_number"] == 2
+
+
+def test_scan_path_accepts_single_file(tmp_path: Path) -> None:
+    """A direct file path is scanned without requiring directory walk."""
+    target = tmp_path / "single.txt"
+    target.write_text('secret = "x"\n', encoding="utf-8")
+
+    findings = scan_path(str(target))
+
+    assert len(findings) == 1
+    assert findings[0]["rule"] == "secret"
+    assert Path(findings[0]["file"]) == target
+
+
+def test_scan_path_missing_path_raises_value_error(tmp_path: Path) -> None:
+    """Missing input path fails fast with ValueError."""
+    missing = tmp_path / "does_not_exist"
+
+    with pytest.raises(ValueError) as excinfo:
+        scan_path(str(missing))
+
+    assert "Path does not exist" in str(excinfo.value)
