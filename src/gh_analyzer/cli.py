@@ -37,6 +37,11 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="N",
         help="Only include PRs created in the last N calendar days (UTC); mutually exclusive with --since",
     )
+    metrics_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print metrics as JSON (keys from compute_pr_metrics)",
+    )
     return parser
 
 
@@ -104,12 +109,12 @@ def main() -> int:
             )
             return 2
 
-        since_for_api, since_err = resolve_metrics_since_argument(
+        since_for_api, since_error = resolve_metrics_since_argument(
             args.since,
             args.since_days,
         )
-        if since_err:
-            print(since_err)
+        if since_error:
+            print(since_error)
             return 2
 
         try:
@@ -119,7 +124,10 @@ def main() -> int:
             print(str(e))
             return 2
 
-        _print_metrics(metrics)
+        if args.json:
+            print(json.dumps(metrics, indent=2, sort_keys=True))
+        else:
+            _print_metrics(metrics)
         return 0
 
     parser.error(f"Unknown command: {args.command}")
