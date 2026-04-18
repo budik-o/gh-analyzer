@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -164,3 +165,93 @@ def test_unexpected_response_shape_raises(mock_get: MagicMock) -> None:
         fetch_pull_requests("owner/repo")
 
     assert "Unexpected response shape" in str(excinfo.value)
+
+
+@patch("gh_analyzer.github_api.requests.get")
+def test_since_adds_sort_created_desc(mock_get: MagicMock) -> None:
+    """When ``since`` is set, list pulls uses newest-first ordering for early-stop."""
+    mock_get.return_value = _http_response(
+        json_data=[
+            {
+                "created_at": "2020-06-01T00:00:00Z",
+                "merged_at": None,
+                "state": "closed",
+            },
+        ],
+    )
+
+    fetch_pull_requests("o/r", since="2020-01-01T00:00:00Z")
+
+    params = mock_get.call_args.kwargs["params"]
+    assert params["sort"] == "created"
+    assert params["direction"] == "desc"
+
+
+@patch("gh_analyzer.github_api.requests.get")
+def test_since_stops_pagination_when_page_entirely_before_cutoff(mock_get: MagicMock) -> None:
+    """Oldest PR on page before ``since`` → no further pages are requested."""
+    mock_get.return_value = _http_response(
+        json_data=[
+            {
+                "created_at": "2018-01-01T00:00:00Z",
+                "merged_at": None,
+                "state": "closed",
+            },
+            {
+                "created_at": "2019-06-01T00:00:00Z",
+                "merged_at": None,
+                "state": "closed",
+            },
+        ],
+    )
+
+    result = fetch_pull_requests("o/r", since="2020-01-01T00:00:00Z")
+
+    assert result == []
+    mock_get.assert_called_once()
+
+
+@patch("gh_analyzer.github_api.requests.get")
+def test_since_second_page_fetched_when_first_still_relevant(mock_get: MagicMock) -> None:
+    """If youngest PR on page is still at/after ``since``, the client requests the next page."""
+    newest = datetime(2025, 12, 31, tzinfo=timezone.utc)
+    page1_batch = [
+        {
+            "created_at": (newest - timedelta(days=i)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "merged_at": None,
+            "state": "open",
+        }
+        for i in range(100)
+    ]
+
+    def side_effect(
+        url: str,
+        headers: dict | None = None,
+        params: dict | None = None,
+        timeout: int | None = None,
+    ) -> MagicMock:
+        assert params is not None
+        assert params["sort"] == "created"
+        assert params["direction"] == "desc"
+        page = params["page"]
+        if page == 1:
+            return _http_response(json_data=page1_batch)
+        if page == 2:
+            return _http_response(
+                json_data=[
+                    {
+                        "created_at": "2023-01-01T00:00:00Z",
+                        "merged_at": None,
+                        "state": "closed",
+                    },
+                ],
+            )
+        raise AssertionError(f"unexpected page {page}")
+
+    mock_get.side_effect = side_effect
+
+    result = fetch_pull_requests("o/r", since="2024-01-01T00:00:00Z")
+
+    assert mock_get.call_count == 2
+    assert len(result) == 100
+    assert result[-1]["created_at"] == page1_batch[-1]["created_at"]

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from datetime import datetime, timedelta, timezone
 
 from gh_analyzer.github_api import GitHubApiError, fetch_pull_requests
 from gh_analyzer.metrics import compute_pr_metrics
@@ -29,8 +30,46 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="ISO8601",
         help="Only include PRs created at or after this time (e.g. 2020-01-01T00:00:00Z)",
     )
-
+    metrics_parser.add_argument(
+        "--since-days",
+        default=None,
+        type=int,
+        metavar="N",
+        help="Only include PRs created in the last N calendar days (UTC); mutually exclusive with --since",
+    )
     return parser
+
+
+def _iso8601_utc_z(dt: datetime) -> str:
+    """Format aware UTC datetime as ISO-8601 with Z suffix (github_api accepts this)."""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    else:
+        dt = dt.astimezone(timezone.utc)
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def resolve_metrics_since_argument(
+    since: str | None,
+    since_days: int | None,
+    *,
+    now_utc: datetime | None = None,
+) -> tuple[str | None, str | None]:
+    """Return ``(since_for_api, error_message)``. If ``error_message`` is set, exit code should be 2."""
+    clock = now_utc if now_utc is not None else datetime.now(timezone.utc)
+    has_explicit_since = since is not None and since != ""
+    has_days = since_days is not None
+
+    if has_explicit_since and has_days:
+        return None, "Error: use only one of --since or --since-days."
+    if has_days:
+        if since_days <= 0:
+            return None, "Error: --since-days must be a positive integer."
+        cutoff = clock - timedelta(days=since_days)
+        return _iso8601_utc_z(cutoff), None
+    if has_explicit_since:
+        return since, None
+    return None, None
 
 
 def _print_metrics(metrics: dict[str, float | int | None]) -> None:
@@ -65,8 +104,16 @@ def main() -> int:
             )
             return 2
 
+        since_for_api, since_err = resolve_metrics_since_argument(
+            args.since,
+            args.since_days,
+        )
+        if since_err:
+            print(since_err)
+            return 2
+
         try:
-            prs = fetch_pull_requests(args.repo, since=args.since)
+            prs = fetch_pull_requests(args.repo, since=since_for_api)
             metrics = compute_pr_metrics(prs)
         except (GitHubApiError, ValueError) as e:
             print(str(e))

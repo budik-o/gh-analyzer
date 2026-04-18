@@ -6,7 +6,7 @@ import os
 import re
 from pathlib import Path
 
-IGNORE_DIRS = {".git", "__pycache__", ".venv", "node_modules"}
+IGNORE_DIRS = {".git", "__pycache__", "venv", ".venv", "node_modules"}
 RULES = ("password", "api_key", "token", "secret")
 
 

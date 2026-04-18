@@ -77,9 +77,12 @@ def fetch_pull_requests(
 
     If ``since`` is an ISO 8601 instant, only PRs with ``created_at`` at or
     after that time are kept (client-side; the pulls API has no ``since`` param).
+    In that case requests use ``sort=created`` and ``direction=desc`` (newest
+    first). Once a full page's oldest ``created_at`` is before ``since``, no
+    later page can contribute matches, so pagination stops early.
 
-    Pagination uses ``per_page=100`` until a page is empty or shorter than
-    ``per_page``.
+    Without ``since``, pagination runs until a page is empty or shorter than
+    ``per_page`` (GitHub default ordering).
     """
     if repo.count("/") != 1:
         raise ValueError("repo must be in the form owner/repo")
@@ -102,11 +105,20 @@ def fetch_pull_requests(
     per_page = 100
 
     while True:
+        params: dict[str, Any] = {
+            "state": "all",
+            "per_page": per_page,
+            "page": page,
+        }
+        if since_dt is not None:
+            params["sort"] = "created"
+            params["direction"] = "desc"
+
         try:
             response = requests.get(
                 url,
                 headers=_auth_headers(),
-                params={"state": "all", "per_page": per_page, "page": page},
+                params=params,
                 timeout=60,
             )
         except RequestException as e:
@@ -125,6 +137,7 @@ def fetch_pull_requests(
         if not batch:
             break
 
+        oldest_on_page: datetime | None = None
         for pr in batch:
             row = _pr_slice(pr)
             if since_dt is not None:
@@ -134,9 +147,18 @@ def fetch_pull_requests(
                     raise GitHubApiError(
                         f"Invalid created_at from API: {row.get('created_at')!r}"
                     ) from e
+                if oldest_on_page is None or created < oldest_on_page:
+                    oldest_on_page = created
                 if created < since_dt:
                     continue
             out.append(row)
+
+        if (
+            since_dt is not None
+            and oldest_on_page is not None
+            and oldest_on_page < since_dt
+        ):
+            break
 
         if len(batch) < per_page:
             break
