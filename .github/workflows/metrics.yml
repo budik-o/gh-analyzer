@@ -1,0 +1,67 @@
+name: Metrics
+
+on:
+  schedule:
+    - cron: "0 6 * * *" # daily at 06:00 UTC
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: "Repository as owner/name (leave empty to use the workflow default)"
+        required: false
+        default: ""
+      since:
+        description: "ISO8601 instant for PR created_at lower bound (e.g. 2020-01-01T00:00:00Z); leave empty to omit. Do not set together with since_days."
+        required: false
+        default: ""
+      since_days:
+        description: "Only PRs created in the last N calendar days (UTC); leave empty to omit. Do not set together with since."
+        required: false
+        default: ""
+
+jobs:
+  metrics:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      METRICS_REPO: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.repo != '' && github.event.inputs.repo || 'github/scientist' }}
+      SINCE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.since || '' }}
+      SINCE_DAYS: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.since_days || '' }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install package from repository
+        run: pip install .
+
+      - name: Run metrics and write JSON
+        run: |
+          set -euo pipefail
+          echo "Analyzing repository: ${METRICS_REPO}"
+          if [[ -n "${SINCE}" && -n "${SINCE_DAYS}" ]]; then
+            echo "Error: provide only one of since or since_days, not both."
+            exit 1
+          fi
+          extra=()
+          if [[ -n "${SINCE}" ]]; then
+            extra+=(--since "${SINCE}")
+          fi
+          if [[ -n "${SINCE_DAYS}" ]]; then
+            extra+=(--since-days "${SINCE_DAYS}")
+          fi
+          gh-analyzer metrics "${METRICS_REPO}" "${extra[@]}" --json > metrics.json
+          echo "--- metrics.json ---"
+          cat metrics.json
+
+      - name: Upload metrics artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: metrics
+          path: metrics.json
