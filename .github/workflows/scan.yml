@@ -38,7 +38,14 @@ jobs:
           rc=$?
           echo "--- scan.json ---"
           cat scan.json
-          exit "${rc}"
+          if [[ "${rc}" -eq 0 ]]; then
+            echo "Scan finished: no findings."
+          elif [[ "${rc}" -eq 1 ]]; then
+            echo "Scan finished: findings reported."
+          else
+            echo "Scan failed with exit code ${rc}."
+            exit "${rc}"
+          fi
 
       - name: Upload scan results artifact
         uses: actions/upload-artifact@v4
