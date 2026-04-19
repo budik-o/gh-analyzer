@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
-from gh_analyzer.security_scanner import scan_path
+from gh_analyzer.security_scanner import build_patterns, scan_file, scan_path, scan_text
 
 
 def test_detects_password_keyword(tmp_path: Path) -> None:
@@ -80,6 +81,37 @@ def test_scan_path_accepts_single_file(tmp_path: Path) -> None:
     assert len(findings) == 1
     assert findings[0]["rule"] == "secret"
     assert Path(findings[0]["file"]) == target
+
+
+def test_scan_text_matches_scan_file(tmp_path: Path) -> None:
+    """scan_text uses the same rules as scan_file for an equivalent body."""
+    target = tmp_path / "x.txt"
+    target.write_text("token = 9\n", encoding="utf-8")
+    patterns = build_patterns()
+    a = scan_file(target, patterns)
+    b = scan_text("virtual", "token = 9\n", patterns)
+    assert len(a) == 1 and len(b) == 1
+    assert a[0]["rule"] == b[0]["rule"] == "token"
+    assert a[0]["line_number"] == b[0]["line_number"] == 1
+    assert a[0]["line"] == b[0]["line"]
+    assert Path(a[0]["file"]) == target
+    assert b[0]["file"] == "virtual"
+
+
+def test_scan_file_records_read_error(tmp_path: Path) -> None:
+    """Unreadable files produce a ``read_error`` finding instead of failing silently."""
+    target = tmp_path / "locked.txt"
+    target.write_text("password = x\n", encoding="utf-8")
+    patterns = build_patterns()
+
+    with patch("gh_analyzer.security_scanner.Path.open", side_effect=PermissionError("denied")):
+        rows = scan_file(target, patterns)
+
+    assert len(rows) == 1
+    assert rows[0]["rule"] == "read_error_rule"
+    assert rows[0]["line_number"] == 0
+    assert "PermissionError" in str(rows[0]["line"])
+    assert str(target) == rows[0]["file"]
 
 
 def test_scan_path_missing_path_raises_value_error(tmp_path: Path) -> None:

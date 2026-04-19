@@ -6,8 +6,10 @@ import argparse
 import json
 import os
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from gh_analyzer.github_api import GitHubApiError, fetch_pull_requests
+from gh_analyzer.github_repo_contents import scan_github_repo
 from gh_analyzer.metrics import compute_pr_metrics
 from gh_analyzer.security_scanner import scan_path
 
@@ -20,7 +22,10 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     scan_parser = subparsers.add_parser("scan", help="Scan a path for potential secrets")
-    scan_parser.add_argument("path", help="Path to scan")
+    scan_parser.add_argument(
+        "path",
+        help="Local directory or file, or GitHub repository as owner/repo",
+    )
 
     metrics_parser = subparsers.add_parser("metrics", help="Show basic repository metrics")
     metrics_parser.add_argument("repo", help="Repository in owner/name format")
@@ -46,7 +51,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _iso8601_utc_z(dt: datetime) -> str:
-    """Format aware UTC datetime as ISO-8601 with Z suffix (github_api accepts this)."""
+    """Format aware UTC datetime as ISO-8601 with Z suffix (GitHub-style instants)."""
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     else:
@@ -92,21 +97,57 @@ def _print_metrics(metrics: dict[str, float | int | None]) -> None:
     print(f"Avg cycle time (hours): {avg_hours_display}")
 
 
+def _github_token_missing_message() -> str:
+    return (
+        "Error: GITHUB_TOKEN is not set. "
+        "Create a personal access token and export it before using GitHub API features."
+    )
+
+
+def _is_single_slash_repo_spec(s: str) -> bool:
+    if s.count("/") != 1:
+        return False
+    owner, name = s.split("/", 1)
+    return bool(owner and name)
+
+
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
 
     if args.command == "scan":
-        findings = scan_path(args.path)
+        raw = args.path
+        local = Path(raw)
+        if local.exists():
+            try:
+                findings = scan_path(raw)
+            except ValueError as e:
+                print(str(e))
+                return 2
+        elif _is_single_slash_repo_spec(raw):
+            if not os.environ.get("GITHUB_TOKEN"):
+                print(_github_token_missing_message())
+                return 2
+            try:
+                findings = scan_github_repo(raw)
+            except (GitHubApiError, ValueError) as e:
+                print(str(e))
+                return 2
+        else:
+            if "/" in raw:
+                print(
+                    f"Error: path does not exist: {raw!r}. "
+                    "For a GitHub repository use exactly one slash (owner/repo)."
+                )
+            else:
+                print(f"Error: path does not exist: {raw}")
+            return 2
         print(json.dumps(findings, indent=2))
         return 1 if findings else 0
 
     if args.command == "metrics":
         if not os.environ.get("GITHUB_TOKEN"):
-            print(
-                "Error: GITHUB_TOKEN is not set. "
-                "Create a personal access token and export it before running metrics."
-            )
+            print(_github_token_missing_message())
             return 2
 
         since_for_api, since_error = resolve_metrics_since_argument(
