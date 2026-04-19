@@ -1,0 +1,48 @@
+name: Scan
+
+on:
+  schedule:
+    - cron: "0 7 * * *" # daily at 07:00 UTC (staggered from metrics)
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: "Public repository as owner/name (leave empty for default demo repo)"
+        required: false
+        default: ""
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      SCAN_REPO: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.repo != '' && github.event.inputs.repo || 'budik-o/gh-analyzer-demo-repo' }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install package from repository
+        run: pip install .
+
+      - name: Run scan and write JSON
+        run: |
+          set -euo pipefail
+          echo "Scanning repository: ${SCAN_REPO}"
+          gh-analyzer scan "${SCAN_REPO}" > scan.json
+          rc=$?
+          echo "--- scan.json ---"
+          cat scan.json
+          exit "${rc}"
+
+      - name: Upload scan results artifact
+        uses: actions/upload-artifact@v4
+        if: success() || failure()
+        with:
+          name: scan
+          path: scan.json
